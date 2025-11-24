@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Dan Handyman | Getting It Done Right</title>
+    <link rel="icon" type="image/png" href="logo.png" />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Oswald:wght@500;700&display=swap" rel="stylesheet">
+    
+    <!-- Babel Standalone for in-browser JSX/TS compilation -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <script>
+      // Polyfill for process.env for static deployment
+      // REPLACE THE EMPTY STRING BELOW WITH YOUR ACTUAL GEMINI API KEY FOR GITHUB PAGES
+      window.process = {
+        env: {
+          API_KEY: "" 
+        }
+      };
+
+      tailwind.config = {
+        darkMode: 'class',
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ['Inter', 'sans-serif'],
+              heading: ['Oswald', 'sans-serif'],
+            },
+            colors: {
+              brand: {
+                dark: '#0f172a',     /* Slate 900 - Main Heading Text */
+                light: '#f8fafc',    /* Slate 50 - Main Background */
+                card: '#ffffff',     /* White - Card Background */
+                primary: '#fbbf24',  /* Amber 400 - Logo Gold */
+                secondary: '#f97316',/* Orange 500 */
+                accent: '#e2e8f0',   /* Slate 200 - Light Borders */
+                text: '#334155'      /* Slate 700 - Body Text */
+              }
+            }
+          }
+        }
+      }
+    </script>
+    <style>
+      body {
+        font-family: 'Inter', sans-serif;
+        background-color: #f8fafc;
+        color: #334155;
+      }
+      h1, h2, h3, h4, h5, h6 {
+        font-family: 'Oswald', sans-serif;
+        color: #0f172a;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/",
+    "react": "https://aistudiocdn.com/react@^19.2.0",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+  }
+}
+</script>
+<link rel="stylesheet" href="/index.css">
+</head>
+  <body class="bg-brand-light text-brand-text antialiased selection:bg-brand-primary selection:text-brand-dark">
+    <div id="root"></div>
+    <!-- Load the main entry point with Babel handling -->
+    <script type="text/babel" data-type="module" src="./index.tsx"></script>
+  <script type="module" src="/index.tsx"></script>
+</body>
+</html>
