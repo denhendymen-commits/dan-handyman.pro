@@ -15,7 +15,7 @@
 
     <script>
       // Polyfill for process.env for static deployment
-      // REPLACE THE EMPTY STRING BELOW WITH YOUR ACTUAL GEMINI API KEY FOR GITHUB PAGES
+      // REPLACE THE EMPTY STRING BELOW WITH YOUR ACTUAL GEMINI API KEY
       window.process = {
         env: {
           API_KEY: "" 
@@ -56,13 +56,14 @@
         color: #0f172a;
       }
     </style>
-  <script type="importmap">
+    <script type="importmap">
 {
   "imports": {
-    "@google/genai": "https://aistudiocdn.com/@google/genai@^1.30.0",
-    "react/": "https://aistudiocdn.com/react@^19.2.0/",
-    "react": "https://aistudiocdn.com/react@^19.2.0",
-    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/"
+    "@google/genai": "https://esm.run/@google/genai",
+    "react": "https://esm.sh/react@18.2.0",
+    "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+    "react-dom/": "https://aistudiocdn.com/react-dom@^19.2.0/",
+    "react/": "https://aistudiocdn.com/react@^19.2.0/"
   }
 }
 </script>
@@ -70,8 +71,897 @@
 </head>
   <body class="bg-brand-light text-brand-text antialiased selection:bg-brand-primary selection:text-brand-dark">
     <div id="root"></div>
-    <!-- Load the main entry point with Babel handling -->
-    <script type="text/babel" data-type="module" src="./index.tsx"></script>
+
+    <!-- MAIN APPLICATION SCRIPT -->
+    <script type="text/babel" data-type="module">
+      import React, { useState, useRef, useEffect } from 'react';
+      import ReactDOM from 'react-dom/client';
+      import { GoogleGenAI } from "@google/genai";
+
+      // --- TYPES ---
+      // (Interfaces are virtual in TS/Babel, but kept for clarity/compilation)
+
+      // --- SERVICES ---
+      
+      const apiKey = window.process.env.API_KEY || '';
+      // Initialize the Gemini client
+      // Note: In a real static build without strict env vars, this might need a fallback check
+      let ai;
+      try {
+        ai = new GoogleGenAI({ apiKey });
+      } catch (e) {
+        console.warn("AI Client initialization failed (likely missing key)", e);
+      }
+
+      // Type enum helper since we can't import Type directly from the simplified CDN export sometimes
+      const Type = {
+        STRING: 'STRING',
+        NUMBER: 'NUMBER',
+        INTEGER: 'INTEGER',
+        BOOLEAN: 'BOOLEAN',
+        ARRAY: 'ARRAY',
+        OBJECT: 'OBJECT'
+      };
+
+      const generateEstimate = async (
+        description,
+        imageBase64
+      ) => {
+        if (!apiKey) {
+          throw new Error("API Key is missing. Please add it to the index.html file.");
+        }
+
+        const modelId = "gemini-2.5-flash"; 
+
+        const responseSchema = {
+          type: Type.OBJECT,
+          properties: {
+            estimatedPriceRange: {
+              type: Type.STRING,
+              description: "A rough estimated price range in USD (e.g., '$150 - $250').",
+            },
+            explanation: {
+              type: Type.STRING,
+              description: "A friendly explanation of what the work entails based on the input.",
+            },
+            difficultyLevel: {
+              type: Type.INTEGER,
+              description: "A number from 1 to 10 indicating difficulty.",
+            },
+            materialsNeeded: {
+              type: Type.ARRAY,
+              items: { type: Type.STRING },
+              description: "List of potential materials needed.",
+            },
+            disclaimer: {
+              type: Type.STRING,
+              description: "A legal disclaimer stating this is AI-generated and requires an in-person quote.",
+            },
+          },
+          required: ["estimatedPriceRange", "explanation", "difficultyLevel", "materialsNeeded", "disclaimer"],
+        };
+
+        const promptText = `
+          You are Dan, an experienced, friendly, and honest handyman. 
+          Analyze the user's repair request.
+          If an image is provided, inspect it for damage magnitude, material type, and accessibility.
+          Provide a conservative, rough cost estimate for the job.
+          Be realistic about labor and parts. 
+          Maintain a professional yet approachable tone.
+          The user's description is: "${description}"
+        `;
+
+        const parts = [{ text: promptText }];
+
+        if (imageBase64) {
+          const base64Data = imageBase64.split(',')[1] || imageBase64;
+          parts.push({
+            inlineData: {
+              mimeType: "image/jpeg",
+              data: base64Data,
+            },
+          });
+        }
+
+        try {
+          const response = await ai.models.generateContent({
+            model: modelId,
+            contents: { parts },
+            config: {
+              responseMimeType: "application/json",
+              responseSchema: responseSchema,
+              systemInstruction: "You are an expert home repair estimator system for Dan Handyman Services.",
+            },
+          });
+
+          const jsonText = response.text;
+          if (!jsonText) throw new Error("No response from AI");
+
+          return JSON.parse(jsonText);
+        } catch (error) {
+          console.error("Error generating estimate:", error);
+          throw new Error("Failed to generate estimate. Please try again later.");
+        }
+      };
+
+      const fileToBase64 = (file) => {
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.readAsDataURL(file);
+          reader.onload = () => resolve(reader.result);
+          reader.onerror = (error) => reject(error);
+        });
+      };
+
+      // --- COMPONENTS ---
+
+      // Button Component
+      const Button = ({ 
+        variant = 'primary', 
+        size = 'md', 
+        className = '', 
+        children, 
+        ...props 
+      }) => {
+        const baseStyles = "inline-flex items-center justify-center font-bold tracking-wide transition-all duration-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-white disabled:opacity-50 disabled:cursor-not-allowed";
+        
+        const variants = {
+          primary: "bg-brand-primary text-brand-dark hover:bg-amber-400 focus:ring-amber-400 shadow-md shadow-amber-200",
+          secondary: "bg-brand-dark text-white hover:bg-slate-800 focus:ring-slate-800 shadow-md",
+          outline: "border-2 border-slate-800 text-slate-800 hover:border-brand-primary hover:text-brand-primary focus:ring-brand-primary bg-transparent"
+        };
+
+        const sizes = {
+          sm: "px-4 py-2 text-sm",
+          md: "px-6 py-3 text-base",
+          lg: "px-8 py-4 text-lg"
+        };
+
+        return (
+          <button 
+            className={`${baseStyles} ${variants[variant]} ${sizes[size]} ${className}`} 
+            {...props}
+          >
+            {children}
+          </button>
+        );
+      };
+
+      // NavBar Component
+      const NavBar = ({ onNavigate }) => {
+        const [isOpen, setIsOpen] = useState(false);
+
+        const navLinks = [
+          { name: 'Services', id: 'services' },
+          { name: 'Projects', id: 'projects' },
+          { name: 'Get AI Quote', id: 'estimator' },
+          { name: 'Book Now', id: 'booking' },
+          { name: 'Testimonials', id: 'testimonials' },
+        ];
+
+        const handleNavClick = (id) => {
+          onNavigate(id);
+          setIsOpen(false);
+        };
+
+        return (
+          <nav className="fixed top-0 left-0 w-full z-50 bg-white/95 backdrop-blur-md border-b border-brand-accent shadow-sm">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="flex justify-between items-center h-20">
+                <div className="flex-shrink-0 flex items-center cursor-pointer group" onClick={() => handleNavClick('hero')}>
+                  <span className="font-heading text-3xl font-bold text-brand-dark italic group-hover:text-brand-primary transition-colors">DAN</span>
+                  <span className="font-heading text-3xl font-bold text-brand-primary ml-1 group-hover:text-brand-dark transition-colors">HANDYMAN</span>
+                </div>
+                
+                <div className="hidden md:flex space-x-8">
+                  {navLinks.map((link) => (
+                    <button
+                      key={link.name}
+                      onClick={() => handleNavClick(link.id)}
+                      className="text-slate-600 hover:text-brand-dark font-medium transition-colors text-sm uppercase tracking-wide"
+                    >
+                      {link.name}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="md:hidden flex items-center">
+                  <button
+                    onClick={() => setIsOpen(!isOpen)}
+                    className="text-slate-600 hover:text-brand-dark focus:outline-none p-2"
+                  >
+                    <svg className="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      {isOpen ? (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                      ) : (
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                      )}
+                    </svg>
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {isOpen && (
+              <div className="md:hidden bg-white border-b border-brand-accent shadow-xl absolute w-full">
+                <div className="px-2 pt-2 pb-3 space-y-1 sm:px-3">
+                  {navLinks.map((link) => (
+                    <button
+                      key={link.name}
+                      onClick={() => handleNavClick(link.id)}
+                      className="block w-full text-left px-3 py-4 text-base font-medium text-slate-600 hover:text-brand-dark hover:bg-slate-50 rounded-md"
+                    >
+                      {link.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+          </nav>
+        );
+      };
+
+      // Hero Component
+      const Hero = ({ onCtaClick, onSecondaryClick }) => {
+        return (
+          <section id="hero" className="relative pt-32 pb-20 lg:pt-48 lg:pb-32 overflow-hidden flex flex-col items-center text-center bg-brand-light">
+            <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[600px] bg-brand-primary/5 rounded-full blur-[100px] -z-10"></div>
+            <div className="absolute top-0 right-0 w-96 h-96 bg-blue-100/30 rounded-full blur-[80px] -z-10"></div>
+
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8 relative z-10 flex flex-col items-center">
+              
+              <div className="mb-8 relative">
+                <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-brand-accent shadow-xl mx-auto bg-white flex items-center justify-center">
+                  <img 
+                    className="w-full h-full object-cover" 
+                    src="logo.png" 
+                    alt="Dan Handyman Logo" 
+                    onError={(e) => {
+                       // Fallback if logo.png is missing
+                       e.target.style.display='none';
+                       e.target.parentElement.classList.add('bg-brand-primary');
+                       e.target.parentElement.innerHTML = '<span class="text-2xl font-bold text-brand-dark">DH</span>';
+                    }}
+                  />
+                </div>
+                <div className="absolute -bottom-8 left-1/2 transform -translate-x-1/2 bg-white px-3 py-1 rounded-full shadow-sm border border-brand-accent text-brand-dark text-xs font-bold tracking-widest uppercase whitespace-nowrap">
+                  Est. 5 Years
+                </div>
+              </div>
+
+              <h1 className="text-5xl tracking-tight font-extrabold text-brand-dark sm:text-6xl md:text-7xl font-heading leading-tight mb-4 mt-4">
+                DAN HANDYMAN
+              </h1>
+              
+              <p className="text-2xl md:text-3xl text-brand-primary font-heading font-medium mb-6">
+                "Getting It Done Right."
+              </p>
+
+              <p className="max-w-xl mx-auto text-lg text-slate-600 leading-relaxed mb-10">
+                Professional repairs, honest communication, and pricing that makes sense. Serving the local area with pride and precision.
+              </p>
+
+              <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto">
+                <Button onClick={onCtaClick} size="lg" className="w-full sm:w-64">
+                  Get AI Estimate
+                </Button>
+                <Button onClick={onSecondaryClick} variant="outline" size="lg" className="w-full sm:w-64">
+                  Book Appointment
+                </Button>
+              </div>
+
+              <div className="mt-12 flex items-center justify-center space-x-8 text-slate-500 text-sm">
+                <div className="flex items-center">
+                   <svg className="w-5 h-5 mr-2 text-brand-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" /></svg>
+                   <span>Licensed & Insured</span>
+                </div>
+                <div className="flex items-center">
+                   <svg className="w-5 h-5 mr-2 text-brand-primary" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                   <span>Fast Response</span>
+                </div>
+              </div>
+
+            </div>
+          </section>
+        );
+      };
+
+      // Services Component
+      const servicesData = [
+        {
+          title: "Plumbing",
+          desc: "Leaky faucets, pipe repairs, toilet installation, and unclogging drains.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>
+        },
+        {
+          title: "Electrical",
+          desc: "Light fixture installation, outlet replacement, ceiling fans, and troubleshooting.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" /></svg>
+        },
+        {
+          title: "Carpentry",
+          desc: "Door repairs, cabinet assembly, shelving units, and trim work.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zM14 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zM14 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" /></svg>
+        },
+        {
+          title: "Painting & Drywall",
+          desc: "Interior painting, drywall patching, hole repair, and texturing.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21a4 4 0 01-4-4V5a2 2 0 012-2h4a2 2 0 012 2v12a4 4 0 01-4 4zm0 0h12a2 2 0 002-2v-4a2 2 0 00-2-2h-2.343M11 7.343l1.657-1.657a2 2 0 012.828 0l2.829 2.829a2 2 0 010 2.828l-8.486 8.485M7 17h.01" /></svg>
+        },
+        {
+          title: "Assembly",
+          desc: "Furniture assembly (IKEA, Wayfair), playground equipment, and sheds.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" /></svg>
+        },
+        {
+          title: "Maintenance",
+          desc: "Gutter cleaning, pressure washing, filter changes, and seasonal checks.",
+          icon: <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-3 7h3m-3 4h3m-6-4h.01M9 16h.01" /></svg>
+        }
+      ];
+
+      const Services = () => {
+        return (
+          <section id="services" className="py-24 bg-white relative">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="text-center mb-16">
+                <h2 className="text-brand-primary font-semibold tracking-wide uppercase text-sm mb-2">What We Do</h2>
+                <p className="text-3xl leading-8 font-extrabold tracking-tight text-brand-dark sm:text-4xl font-heading">
+                  Professional Services
+                </p>
+                <div className="h-1 w-20 bg-brand-primary mx-auto mt-4 rounded-full"></div>
+              </div>
+
+              <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+                {servicesData.map((service) => (
+                  <div key={service.title} className="group relative bg-brand-light p-8 border border-brand-accent rounded-xl shadow-sm hover:shadow-xl transition-all duration-300 hover:-translate-y-1">
+                    <div className="flex items-center justify-center h-12 w-12 rounded-lg bg-white text-brand-primary mb-6 shadow-sm border border-brand-accent group-hover:bg-brand-primary group-hover:text-brand-dark transition-colors duration-300">
+                      {service.icon}
+                    </div>
+                    <h3 className="text-xl font-bold text-brand-dark mb-3 font-heading tracking-wide">{service.title}</h3>
+                    <p className="text-slate-600 leading-relaxed text-sm">
+                      {service.desc}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        );
+      };
+
+      // Projects Component
+      const projectsData = [
+        {
+          id: 1,
+          image: 'project1.jpg',
+          title: 'Kitchen Remodel',
+          category: 'Renovation'
+        },
+        {
+          id: 2,
+          image: 'project2.jpg',
+          title: 'Parquet Flooring',
+          category: 'Flooring'
+        },
+        {
+          id: 3,
+          image: 'project3.jpg',
+          title: 'Bedroom Finishing',
+          category: 'Painting & Drywall'
+        },
+        {
+          id: 4,
+          image: 'project4.jpg',
+          title: 'Interior Updates',
+          category: 'General Repairs'
+        }
+      ];
+
+      const Projects = () => {
+        return (
+          <section id="projects" className="py-24 bg-brand-light relative border-t border-brand-accent">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="text-center mb-16">
+                <h2 className="text-brand-primary font-semibold tracking-wide uppercase text-sm mb-2">Our Portfolio</h2>
+                <p className="text-3xl leading-8 font-extrabold tracking-tight text-brand-dark sm:text-4xl font-heading">
+                  Recent Projects
+                </p>
+                <div className="h-1 w-20 bg-brand-primary mx-auto mt-4 rounded-full"></div>
+                <p className="mt-4 text-slate-600 max-w-2xl mx-auto">
+                  Take a look at some of our recent renovation, flooring, and painting jobs.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                {projectsData.map((project) => (
+                  <div key={project.id} className="group relative rounded-xl overflow-hidden shadow-md hover:shadow-2xl border border-brand-accent bg-white transition-all duration-300">
+                    <div className="aspect-w-16 aspect-h-12 w-full h-80 relative overflow-hidden bg-slate-200">
+                      <img 
+                        src={project.image} 
+                        alt={project.title} 
+                        className="w-full h-full object-cover transform group-hover:scale-105 transition-transform duration-500 ease-out"
+                        onError={(e) => { e.target.src = 'https://placehold.co/600x400?text=Project+Photo'; }}
+                      />
+                      <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent opacity-60"></div>
+                    </div>
+                    <div className="absolute bottom-0 left-0 w-full p-6">
+                      <span className="inline-block px-3 py-1 bg-brand-primary text-brand-dark text-xs font-bold rounded-full mb-2 shadow-sm">
+                        {project.category}
+                      </span>
+                      <h3 className="text-xl font-heading font-bold text-white drop-shadow-md">{project.title}</h3>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        );
+      };
+
+      // AI Estimator Component
+      const AIEstimator = () => {
+        const [description, setDescription] = useState('');
+        const [selectedFile, setSelectedFile] = useState(null);
+        const [imagePreview, setImagePreview] = useState(null);
+        const [loading, setLoading] = useState(false);
+        const [result, setResult] = useState(null);
+        const [error, setError] = useState(null);
+        const fileInputRef = useRef(null);
+
+        const handleFileChange = async (e) => {
+          if (e.target.files && e.target.files[0]) {
+            const file = e.target.files[0];
+            setSelectedFile(file);
+            
+            // Create preview
+            const base64 = await fileToBase64(file);
+            setImagePreview(base64);
+          }
+        };
+
+        const handleRemoveImage = () => {
+          setSelectedFile(null);
+          setImagePreview(null);
+          if (fileInputRef.current) fileInputRef.current.value = '';
+        };
+
+        const handleSubmit = async (e) => {
+          e.preventDefault();
+          if (!description.trim()) {
+            setError("Please describe the issue.");
+            return;
+          }
+
+          setLoading(true);
+          setError(null);
+          setResult(null);
+
+          try {
+            let imageBase64 = undefined;
+            if (selectedFile) {
+              imageBase64 = await fileToBase64(selectedFile);
+            }
+
+            const estimate = await generateEstimate(description, imageBase64);
+            setResult(estimate);
+          } catch (err) {
+            setError(err.message || "Something went wrong. Please try again.");
+          } finally {
+            setLoading(false);
+          }
+        };
+
+        return (
+          <section id="estimator" className="py-24 bg-white border-t border-brand-accent">
+            <div className="max-w-4xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="bg-white rounded-2xl shadow-2xl border border-brand-accent overflow-hidden">
+                <div className="h-2 bg-gradient-to-r from-brand-primary to-orange-400"></div>
+                
+                <div className="p-8 sm:p-12">
+                  <div className="text-center mb-10">
+                    <span className="inline-flex items-center justify-center px-4 py-1 rounded-full bg-brand-primary/10 text-brand-dark text-sm font-bold mb-4 border border-brand-primary/20">
+                      ✨ AI-Powered Estimate
+                    </span>
+                    <h2 className="text-3xl font-heading font-bold text-brand-dark mb-4">Rough Quote Generator</h2>
+                    <p className="text-slate-600">
+                      Describe your problem or upload a photo. Dan's AI assistant will provide an instant price range and difficulty assessment.
+                    </p>
+                  </div>
+
+                  <div className="grid md:grid-cols-1 gap-10">
+                    <form onSubmit={handleSubmit} className="space-y-6">
+                      <div>
+                        <label htmlFor="description" className="block text-sm font-medium text-slate-700 mb-2">
+                          Project Description
+                        </label>
+                        <textarea
+                          id="description"
+                          rows={4}
+                          className="w-full px-4 py-3 rounded-lg bg-slate-50 border border-slate-300 focus:ring-2 focus:ring-brand-primary focus:border-transparent text-slate-900 placeholder-slate-400 transition-colors"
+                          placeholder="e.g., The pipe under the kitchen sink is leaking water onto the cabinet floor..."
+                          value={description}
+                          onChange={(e) => setDescription(e.target.value)}
+                        />
+                      </div>
+
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-2">
+                          Photo Evidence (Optional)
+                        </label>
+                        <div className="mt-1 flex justify-center px-6 pt-5 pb-6 border-2 border-slate-300 border-dashed rounded-lg hover:border-brand-primary hover:bg-slate-50 transition-colors bg-white cursor-pointer group"
+                            onClick={() => fileInputRef.current?.click()}>
+                          <div className="space-y-1 text-center">
+                            {imagePreview ? (
+                              <div className="relative inline-block">
+                                <img src={imagePreview} alt="Preview" className="h-48 object-contain rounded-md mx-auto shadow-sm" />
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleRemoveImage(); }}
+                                  className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 hover:bg-red-600 shadow-md"
+                                >
+                                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" /></svg>
+                                </button>
+                              </div>
+                            ) : (
+                              <>
+                                <svg className="mx-auto h-12 w-12 text-slate-400 group-hover:text-brand-primary transition-colors" stroke="currentColor" fill="none" viewBox="0 0 48 48" aria-hidden="true">
+                                  <path d="M28 8H12a4 4 0 00-4 4v20m32-12v8m0 0v8a4 4 0 01-4 4H12a4 4 0 01-4-4v-4m32-4l-3.172-3.172a4 4 0 00-5.656 0L28 28M8 32l9.172-9.172a4 4 0 015.656 0L28 28m0 0l4 4m4-24h8m-4-4v8m-12 4h.02" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                                </svg>
+                                <div className="flex text-sm text-slate-500 justify-center">
+                                  <span className="relative cursor-pointer bg-transparent rounded-md font-medium text-brand-primary hover:text-orange-600 focus-within:outline-none">
+                                    <span>Upload a file</span>
+                                  </span>
+                                  <p className="pl-1">or drag and drop</p>
+                                </div>
+                              </>
+                            )}
+                            <input 
+                              ref={fileInputRef}
+                              type="file" 
+                              className="sr-only" 
+                              accept="image/*"
+                              onChange={handleFileChange}
+                            />
+                          </div>
+                        </div>
+                      </div>
+
+                      {error && (
+                        <div className="p-4 bg-red-50 border border-red-200 text-red-700 rounded-lg text-sm">
+                          {error}
+                        </div>
+                      )}
+
+                      <Button type="submit" disabled={loading} className="w-full flex justify-center" size="lg">
+                        {loading ? (
+                          <span className="flex items-center">
+                            <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-brand-dark" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                            </svg>
+                            Analyzing...
+                          </span>
+                        ) : "Generate Estimate"}
+                      </Button>
+                    </form>
+
+                    {/* Results Display */}
+                    {result && (
+                      <div className="mt-8 bg-slate-50 border border-brand-accent rounded-xl p-6 animate-fade-in-up shadow-inner">
+                        <div className="flex items-center justify-between mb-4 pb-4 border-b border-brand-accent">
+                          <h3 className="text-xl font-bold text-brand-dark font-heading">Estimated Cost</h3>
+                          <span className="text-3xl font-bold text-brand-secondary">{result.estimatedPriceRange}</span>
+                        </div>
+                        
+                        <div className="space-y-4">
+                          <div>
+                            <h4 className="font-semibold text-slate-700 text-sm uppercase tracking-wide mb-1">Analysis</h4>
+                            <p className="text-slate-600">{result.explanation}</p>
+                          </div>
+
+                          <div className="flex gap-6">
+                              <div className="flex-1">
+                                <h4 className="font-semibold text-slate-700 text-sm uppercase tracking-wide mb-1">Difficulty</h4>
+                                <div className="flex items-center">
+                                  <div className="w-full bg-slate-200 rounded-full h-2.5 mr-2">
+                                    <div className="bg-brand-primary h-2.5 rounded-full" style={{ width: `${result.difficultyLevel * 10}%` }}></div>
+                                  </div>
+                                  <span className="text-sm font-bold text-slate-700">{result.difficultyLevel}/10</span>
+                                </div>
+                              </div>
+                          </div>
+
+                          <div>
+                            <h4 className="font-semibold text-slate-700 text-sm uppercase tracking-wide mb-2">Likely Materials</h4>
+                            <div className="flex flex-wrap gap-2">
+                              {result.materialsNeeded.map((item, idx) => (
+                                <span key={idx} className="bg-white border border-slate-300 text-slate-600 text-xs font-medium px-2.5 py-0.5 rounded shadow-sm">
+                                  {item}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="mt-6 p-4 bg-yellow-50 rounded-lg border border-yellow-200">
+                            <p className="text-xs text-yellow-800 font-medium italic">
+                              Disclaimer: {result.disclaimer}
+                            </p>
+                        </div>
+                        
+                        <div className="mt-6 text-center">
+                            <p className="text-sm text-slate-500 mb-3">Happy with this range?</p>
+                            <Button variant="secondary" onClick={() => document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' })}>
+                              Book Dan Now
+                            </Button>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      };
+
+      // BookingForm Component
+      const BookingForm = () => {
+        const [status, setStatus] = useState('IDLE'); // IDLE, SUBMITTING, SUCCESS, ERROR
+        
+        const handleSubmit = (e) => {
+          e.preventDefault();
+          setStatus('SUBMITTING');
+          
+          // Simulate API call
+          setTimeout(() => {
+            setStatus('SUCCESS');
+          }, 1500);
+        };
+
+        if (status === 'SUCCESS') {
+          return (
+            <section id="booking" className="py-24 bg-brand-light">
+              <div className="max-w-xl mx-auto px-4 text-center">
+                <div className="w-20 h-20 bg-green-100 rounded-full flex items-center justify-center mx-auto mb-6 border border-green-200">
+                  <svg className="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                  </svg>
+                </div>
+                <h2 className="text-3xl font-heading font-bold text-brand-dark mb-4">Request Received!</h2>
+                <p className="text-lg text-slate-600 mb-8">
+                  Thanks for choosing Dan Handyman. I'll review your request and call you within 24 hours to confirm.
+                </p>
+                <Button onClick={() => setStatus('IDLE')} variant="outline">
+                  Book Another Job
+                </Button>
+              </div>
+            </section>
+          );
+        }
+
+        return (
+          <section id="booking" className="py-24 bg-brand-light relative border-t border-brand-accent">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <div className="lg:grid lg:grid-cols-2 lg:gap-16 items-start">
+                <div className="mb-10 lg:mb-0">
+                  <h2 className="text-3xl font-heading font-bold text-brand-dark tracking-tight sm:text-4xl mb-6">
+                    Ready to Fix It?
+                  </h2>
+                  <p className="text-lg text-slate-600 mb-8">
+                    Skip the phone tag. Fill out the form, and I'll get back to you to confirm a time that works for you.
+                  </p>
+                  
+                  <div className="space-y-6">
+                    <div className="flex items-center group p-4 rounded-xl hover:bg-white transition-all border border-transparent hover:border-brand-accent hover:shadow-md">
+                      <div className="flex-shrink-0 w-12 h-12 bg-brand-primary/10 rounded-full flex items-center justify-center text-brand-primary border border-brand-primary/20">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" /></svg>
+                      </div>
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-slate-500">Phone</p>
+                        <p className="text-lg font-bold text-brand-dark font-heading">(415) 509-8778</p>
+                      </div>
+                    </div>
+                    <div className="flex items-center group p-4 rounded-xl hover:bg-white transition-all border border-transparent hover:border-brand-accent hover:shadow-md">
+                      <div className="flex-shrink-0 w-12 h-12 bg-brand-primary/10 rounded-full flex items-center justify-center text-brand-primary border border-brand-primary/20">
+                        <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 8l7.89 5.26a2 2 0 002.22 0L21 8M5 19h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+                      </div>
+                      <div className="ml-4">
+                        <p className="text-sm font-medium text-slate-500">Email</p>
+                        <p className="text-lg font-bold text-brand-dark font-heading">danhandyman.email@gmail.com</p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white rounded-2xl p-8 border border-brand-accent shadow-xl">
+                  <form onSubmit={handleSubmit} className="space-y-6">
+                    <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+                      <div>
+                        <label htmlFor="firstName" className="block text-sm font-medium text-slate-700 mb-1">First Name</label>
+                        <input type="text" id="firstName" required className="block w-full rounded-lg bg-slate-50 border border-slate-300 text-slate-900 py-3 px-4 focus:ring-2 focus:ring-brand-primary focus:border-transparent outline-none transition-all" />
+                      </div>
+                      <div>
+                        <label htmlFor="lastName" className="block text-sm font-medium text-slate-700 mb-1">Last Name</label>
+                        <input type="text" id="lastName" required className="block w-full rounded-lg bg-slate-50 border border-slate-300 text-slate-900 py-3 px-4 focus:ring-2 focus:ring-brand-primary focus:border-transparent outline-none transition-all" />
+                      </div>
+                    </div>
+
+                    <div>
+                      <label htmlFor="email" className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                      <input type="email" id="email" required className="block w-full rounded-lg bg-slate-50 border border-slate-300 text-slate-900 py-3 px-4 focus:ring-2 focus:ring-brand-primary focus:border-transparent outline-none transition-all" />
+                    </div>
+
+                    <div>
+                      <label htmlFor="serviceType" className="block text-sm font-medium text-slate-700 mb-1">Service Needed</label>
+                      <select id="serviceType" className="block w-full rounded-lg bg-slate-50 border border-slate-300 text-slate-900 py-3 px-4 focus:ring-2 focus:ring-brand-primary focus:border-transparent outline-none transition-all">
+                        <option>General Repair</option>
+                        <option>Plumbing</option>
+                        <option>Electrical</option>
+                        <option>Carpentry</option>
+                        <option>Painting</option>
+                        <option>Assembly</option>
+                      </select>
+                    </div>
+                    
+                    <div>
+                      <label htmlFor="jobDetails" className="block text-sm font-medium text-slate-700 mb-1">Job Details</label>
+                      <textarea id="jobDetails" rows={4} className="block w-full rounded-lg bg-slate-50 border border-slate-300 text-slate-900 py-3 px-4 focus:ring-2 focus:ring-brand-primary focus:border-transparent outline-none transition-all"></textarea>
+                    </div>
+
+                    <Button type="submit" disabled={status === 'SUBMITTING'} className="w-full">
+                      {status === 'SUBMITTING' ? 'Sending Request...' : 'Book Appointment'}
+                    </Button>
+                  </form>
+                </div>
+              </div>
+            </div>
+          </section>
+        );
+      };
+
+      // Testimonials Component
+      const testimonialsData = [
+        {
+          id: 1,
+          content: "Dan saved the day when my kitchen pipe burst. He arrived within an hour, fixed it quickly, and cleaned up everything afterward. Highly recommended!",
+          author: "Sarah Jenkins",
+          role: "Homeowner",
+          stars: 5
+        },
+        {
+          id: 2,
+          content: "I used the AI estimate feature on the site, and it was surprisingly accurate! Dan was professional and the final bill matched the quote perfectly.",
+          author: "Mike Thompson",
+          role: "Local Business Owner",
+          stars: 5
+        },
+        {
+          id: 3,
+          content: "Honest pricing and great workmanship. It's hard to find a handyman you can trust these days, but Dan is the real deal.",
+          author: "Emily Chen",
+          role: "Real Estate Agent",
+          stars: 5
+        }
+      ];
+
+      const Testimonials = () => {
+        return (
+          <section id="testimonials" className="py-24 bg-white relative">
+            <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+              <h2 className="text-3xl font-heading font-bold text-center mb-16 text-brand-dark">
+                Trust & <span className="text-brand-primary">Testimonials</span>
+              </h2>
+              
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
+                {testimonialsData.map((t) => (
+                  <div key={t.id} className="bg-brand-light p-8 rounded-xl shadow-md border border-brand-accent flex flex-col justify-between hover:shadow-xl hover:border-brand-primary/50 transition-all duration-300">
+                    <div>
+                      <div className="flex mb-4 text-brand-primary">
+                        {[...Array(t.stars)].map((_, i) => (
+                          <svg key={i} className="w-5 h-5 fill-current" viewBox="0 0 24 24"><path d="M12 17.27L18.18 21l-1.64-7.03L22 9.24l-7.19-.61L12 2 9.19 8.63 2 9.24l5.46 4.73L5.82 21z"/></svg>
+                        ))}
+                      </div>
+                      <p className="text-slate-600 italic mb-6">"{t.content}"</p>
+                    </div>
+                    <div className="flex items-center">
+                      <div className="flex-shrink-0">
+                        <div className="h-10 w-10 rounded-full bg-white flex items-center justify-center font-bold text-brand-primary border border-brand-accent shadow-sm">
+                          {t.author.charAt(0)}
+                        </div>
+                      </div>
+                      <div className="ml-3">
+                        <p className="text-sm font-medium text-brand-dark">{t.author}</p>
+                        <p className="text-xs text-slate-500">{t.role}</p>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </section>
+        );
+      };
+
+      // Footer Component
+      const Footer = () => {
+        return (
+          <footer className="bg-brand-dark border-t border-brand-accent">
+            <div className="max-w-7xl mx-auto py-12 px-4 sm:px-6 lg:px-8">
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-8 text-slate-400">
+                <div>
+                  <h3 className="text-white text-xl font-bold mb-4 font-heading italic">DAN<span className="text-brand-primary not-italic ml-1">HANDYMAN</span></h3>
+                  <p className="text-sm leading-relaxed">Reliable, professional, and friendly handyman services for your home and business. We take pride in getting it done right the first time.</p>
+                </div>
+                <div>
+                  <h3 className="text-white text-lg font-bold mb-4 font-heading">Contact Info</h3>
+                  <p className="text-sm mb-3 flex items-center"><span className="w-6">📞</span> (415) 509-8778</p>
+                  <p className="text-sm mb-3 flex items-center"><span className="w-6">✉️</span> danhandyman.email@gmail.com</p>
+                  <p className="text-sm flex items-center"><span className="w-6">📍</span> Serving the Bay Area</p>
+                </div>
+                <div>
+                  <h3 className="text-white text-lg font-bold mb-4 font-heading">Working Hours</h3>
+                  <p className="text-sm mb-2 text-slate-300">Mon - Fri: <span className="text-slate-500">8am - 6pm</span></p>
+                  <p className="text-sm mb-2 text-slate-300">Sat: <span className="text-slate-500">9am - 2pm</span></p>
+                  <p className="text-sm text-slate-300">Sun: <span className="text-brand-primary">Closed</span></p>
+                </div>
+              </div>
+              <div className="mt-12 border-t border-slate-800 pt-8 flex justify-between items-center text-sm">
+                <p>&copy; {new Date().getFullYear()} Dan Handyman Services. All rights reserved.</p>
+                <div className="flex space-x-6">
+                  <a href="#" className="hover:text-brand-primary transition-colors">Privacy</a>
+                  <a href="#" className="hover:text-brand-primary transition-colors">Terms</a>
+                </div>
+              </div>
+            </div>
+          </footer>
+        );
+      };
+
+      // Main App Component
+      function App() {
+        const scrollToSection = (id) => {
+          const element = document.getElementById(id);
+          if (element) {
+            element.scrollIntoView({ behavior: 'smooth' });
+          }
+        };
+
+        return (
+          <div className="min-h-screen bg-brand-light text-brand-text">
+            <NavBar onNavigate={scrollToSection} />
+            
+            <main>
+              <Hero 
+                onCtaClick={() => scrollToSection('estimator')} 
+                onSecondaryClick={() => scrollToSection('booking')}
+              />
+              <Services />
+              <Projects />
+              <AIEstimator />
+              <Testimonials />
+              <BookingForm />
+            </main>
+
+            <Footer />
+          </div>
+        );
+      }
+
+      // Root Render
+      const rootElement = document.getElementById('root');
+      if (!rootElement) {
+        throw new Error("Could not find root element to mount to");
+      }
+
+      const root = ReactDOM.createRoot(rootElement);
+      root.render(
+        <React.StrictMode>
+          <App />
+        </React.StrictMode>
+      );
+    </script>
   <script type="module" src="/index.tsx"></script>
 </body>
 </html>
